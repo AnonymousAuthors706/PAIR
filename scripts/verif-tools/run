@@ -1,0 +1,29 @@
+#!/bin/bash
+
+module=$1
+echo "Running NuSMV for ${module}.v"
+
+rm -rf build-verif
+mkdir -p build-verif
+# cp ../acfa_hw/cfa_module/branch_monitor.v ../acfi_hw/branch_monitor.v 
+
+# Copy verilog source code to temp directory
+
+cp ../openmsp430/msp_core/openMSP430_undefines.v ./build-verif/
+cp ../openmsp430/msp_core/openMSP430_defines.v ./build-verif/
+cp ../acfi_hw/${module}.v ./build-verif/
+# cp ../acfi_hw/*.mem ./build-verif/
+
+# Specification
+cp ../verification_specs/${module}_specs.smv ./build-verif
+
+for filename in ./build-verif/*.v; do
+	sed -i "s/always @(posedge clk)/always @(*)/g" $filename
+done
+
+sh ./verif-tools/verilog2smv.sh ./build-verif/${module}.v ./build-verif/hwmod_generated.smv ${module}
+
+sed -i "s/IVAR/VAR/g" ./build-verif/hwmod_generated.smv # Hacky here since IVAR doesnt work properly
+echo '#include "'${module}'_specs.smv"' >> ./build-verif/hwmod_generated.smv
+
+./verif-tools/NuSMV -coi -df -v 1 -pre cpp ./build-verif/hwmod_generated.smv
