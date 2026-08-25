@@ -1,0 +1,44 @@
+-- LTL for Availability Monitor assuming the following: 
+-- max 4 BITS OF TASK ID 
+-- max 16 tasks
+
+-- constants -- (max 4 bits)
+--    id0 := 0uh4_0000;
+--    id1 := 0uh4_0001;
+--    id2 := 0uh4_0002;
+--    id3 := 0uh4_0003;
+
+-- definitions
+    task_mask := (0uh16_0001 << "cur_task_id");
+    prev_task_mask := (0uh16_0001 << "prev_task_id");
+--    inv_mask := !task_mask;
+--    inv_prev_mask := !prev_task_mask;
+    cleared := 0uh16_0000;
+    set := 0uh16_ffff;
+    VALID_EXIT := 0uh16_ff00;
+
+    -- AM_violation := "in_task" & (("AR_en" & task_mask) = cleared);
+    task_AR_bit := ("AR_en" & task_mask);
+    task_en := task_AR_bit = task_mask;
+
+-- Availability Monitor Specs
+    -- tracking prev_task_id
+    LTLSPEC G (!"in_RTOS" -> next("prev_task_id") = "cur_task_id");
+
+    -- disable task that re-entered a violating task 
+    LTLSPEC G ("in_task" & (("AR_en" & task_mask) = cleared) -> (next("AR_en") & prev_task_mask) = cleared);
+
+    -- Zombify IRQ flag only clears when system reset signal or it has been accepted
+    LTLSPEC G ("reset" | ("zombify_irq" & "irq" & !"cfi_violation" & !"inter_task_violation" & !bool("AM_violation")) -> !next("zombify_irq"));
+
+    -- Reset AR 
+    LTLSPEC G (!"inter_task_violation" & !"cfi_violation" & !"in_task" & !"in_RTOS" & !"in_ER" & ("pc" = VALID_EXIT) -> next("AR_en") = set);
+
+    -- Definition 1a:
+    LTLSPEC G (!"reset" & ("cfi_violation" | "inter_task_violation" | bool("AM_violation")) -> next("zombify_irq"));
+    
+    -- Definition 1b:
+    LTLSPEC G (("in_ER" | "in_RTOS") & "cfi_violation" & !"inter_task_violation" -> (next("AR_en") & task_mask) = cleared);
+
+    -- Definition 2:
+    LTLSPEC G ("in_task" -> (task_en | bool("AM_violation")))
