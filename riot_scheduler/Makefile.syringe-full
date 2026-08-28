@@ -1,0 +1,97 @@
+# makfile configuration
+NAME            = tcb
+
+APPDIR          = ./syringe-pump-full
+APP_SRC         = $(APPDIR)/main.c $(APPDIR)/syringe.c $(APPDIR)/lcd.c $(APPDIR)/temp.c $(APPDIR)/comms.c
+APP_OBJ         = $(APP_SRC:.c=.o)
+
+MODULE_SRC      = $(APPDIR)/syringe.c $(APPDIR)/temp.c $(APPDIR)/comms.c $(APPDIR)/lcd.c
+MODULE_OBJ      = $(MODULE_SRC:.c=.o)
+
+OBJECTS         = $(APP_OBJ) riot.o ../tcb.swatt hacl_mac.lib
+
+# Choose GCC toolchain prefix ('msp430' for MSPGCC / 'msp430-elf' for GCC RedHat/TI)
+MSPGCC_PFX      = msp430
+
+# Select flags depending on selected toolchain
+CFLAGS          = -D PFX_MSP430  -std=c99 -w -g -mcpu=430    -mmpy=none    -mivcnt=16 -DMODULE_CORE_THREAD_FLAGS -O0
+
+# Toolchain executables
+CC              = ${MSPGCC_PFX}-gcc
+OBJCOPY		    = ${MSPGCC_PFX}-objcopy
+OBJDUMP         = ${MSPGCC_PFX}-objdump
+OBJSIZE         = ${MSPGCC_PFX}-size
+
+SRCDIR          = ./core/src
+INCLUDEDIR      = ./core/include/
+LIBDIR          = ./core/lib/include
+DEPFLAGS        = -MP -MD
+SRC             = $(wildcard $(SRCDIR)/*.c)
+INCLUDES        = -I$(INCLUDEDIR) -I${SRCDIR} -I$(LIBDIR) -I$(LIBDIR)/macros -I$(APPDIR)
+
+SRC2 = $(wildcard $(SRCDIR)/*.c) $(wildcard $(INCLUDEDIR)/*.c)
+OBJ = $(SRC:.c=.o)
+
+.PHONY: all FORCE clean download download-jtag download-bsl dist app_modules
+
+SRC_DIRS = ./core/lib ./core/src 
+
+MODULE_SRC      = $(APPDIR)/syringe.c $(APPDIR)/temp.c $(APPDIR)/comms.c $(APPDIR)/lcd.c
+MODULE_OBJ      = $(MODULE_SRC:.c=.o)
+
+all: hacl_mac.lib riot.o app_modules $(APP_OBJ) ${NAME}.elf ${NAME}.a43 ${NAME}.lst ${NAME}.size 
+
+app_modules: $(MODULE_OBJ)
+	${OBJCOPY} --rename-section .text=.syringe_module syringe-pump-full/syringe.o syringe-pump-full/syringe.o
+	${OBJCOPY} --rename-section .text=.temp_module    syringe-pump-full/temp.o    syringe-pump-full/temp.o
+	${OBJCOPY} --rename-section .text=.comms_module   syringe-pump-full/comms.o   syringe-pump-full/comms.o
+	${OBJCOPY} --rename-section .text=.lcd_module      syringe-pump-full/lcd.o     syringe-pump-full/lcd.o
+
+${NAME}.elf: ${OBJECTS}
+	${CC} ${CFLAGS} -T pmem.def -o $@ ${OBJECTS}
+	@echo "=== Module address bounds ==="
+	@${OBJDUMP} -t $@ | grep -E '__syringe_start' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__syringe_end' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__temp_start' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__temp_end' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__comms_start' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__comms_end' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__lcd_start' | awk '{print $1}' | sed 's/^0*//'
+	@${OBJDUMP} -t $@ | grep -E '__lcd_end' | awk '{print $1}' | sed 's/^0*//'
+
+${NAME}.a43: ${NAME}.elf
+	${OBJCOPY} -O ihex $^ $@
+
+${NAME}.lst: ${NAME}.elf
+	${OBJDUMP} -dSt $^ >$@
+	${OBJDUMP} -d $^ >bare.lst
+
+${NAME}.size: ${NAME}.elf
+	${OBJSIZE}  $^ >$@
+
+%.o: %.c
+	${CC} ${CFLAGS} ${INCLUDES} -c -o $@ $<
+
+riot.o: 
+	@set -e; \
+	mkdir -p tmp_objs; \
+	for file in $(shell find $(SRC_DIRS) -type f -name "*.c"); do \
+	  obj=tmp_objs/$$(basename $$file .c).o; \
+	  echo $(CC)" "$(CFLAGS)" "${INCLUDES}" -c "$$file" -o "$$obj; \
+	  $(CC) $(CFLAGS) ${INCLUDES} -c $$file -o $$obj; \
+	  $(OBJCOPY) --rename-section .text=.riot_body $$obj $$obj; \
+	done; \
+	ar rcs riot.o tmp_objs/*.o; \
+	rm -rf tmp_objs
+
+hacl_mac.lib: 
+	cd hacl-c ; \
+	${CC} ${CFLAGS} -c -o hacl.lib.o Hacl_HMAC_SHA2_256.c ; \
+	ar crs ../$@ hacl.lib.o ; \
+	rm hacl.lib.o 
+
+clean:
+	rm -f ${NAME} ${NAME}.a43 ${NAME}.lst ${NAME}.elf ${NAME}.size *.o pmem.def 
+	rm -f $(APP_OBJ)
+
+#project dependencies
